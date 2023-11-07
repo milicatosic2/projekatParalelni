@@ -2,6 +2,7 @@ import threading
 
 def komanda_put():
     print("Komanda put")
+    print("ja sma nadja usla sam alooo")
 
 def komanda_get(file_id):
     print("Komanda get")
