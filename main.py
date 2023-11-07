@@ -1,8 +1,82 @@
 import threading
+import multiprocessing
+import hashlib
 
-def komanda_put():
-    print("Komanda put")
-    print("ja sma nadja usla sam alooo")
+file_registry = {}
+part_registry = {}
+index = {}
+
+file_id_counter = 1
+part_id_counter = 1
+
+def add_file(file_name,status,additional_data = None):
+    global file_id_counter
+    file_id_counter += 1
+    file_id = file_id_counter
+    file_registry[file_id] = {
+        'file_name' : file_name,
+        'status' : status,
+        'additional_data' : additional_data
+    }
+    return file_id_counter
+
+def remove_file(file_registry,file_id):
+    if file_id in file_registry:
+        del file_registry[file_id]
+
+def update_status(file_registry,file_id,new_status):
+    if file_id in file_registry:
+        file_registry[file_id]['status'] = new_status
+
+def get_file_info(file_registry, file_id):
+    return file_registry.get(file_id, None)
+
+def add_part(file_id,part_number,md5_hash,additional_data = None):
+    global part_id_counter
+    part_id_counter += 1
+    part_registry[part_id_counter] = {
+        'file_id': file_id,
+        'part_number': part_number,
+        'md5_hash': md5_hash,
+        'additional_data': additional_data
+    }
+    if file_id in index:
+        index[file_id].append(part_id_counter)
+    else:
+        index[file_id] = [part_id_counter]
+
+def process_file_part(part_id, data):
+    md5_hash = hashlib.md5(data).hexdigest()
+    # Simulacija kompresije
+    compressed_data = data  # Implementirajte stvarnu kompresiju ovdje
+    print(f"Compressed data: {compressed_data}")
+    return md5_hash
+
+def remove_part(part_registry, index, part_id):
+    if part_id in part_registry:
+        file_id = part_registry[part_id]['file_id']
+        del part_registry[part_id]
+        if file_id in index:
+            index[file_id].remove(part_id)
+
+def get_parts_of_file(index, file_id):
+    return index.get(file_id, [])
+
+def get_part_info(part_registry, part_id):
+    return part_registry.get(part_id, None)
+
+def komanda_put(file_registry, part_registry,index,file_name,data,ui_processes):
+    file_id = add_file(file_registry, file_name, "incomplete")
+    part_number = 0
+    for part_data in data:
+        part_number += 1
+        part_id = add_part(part_registry, index, file_id, part_number, None)  # MD5 će biti postavljen kasnije
+        ui_process = ui_processes.apply_async(process_file_part, args=(part_id, part_data))
+        ui_process.get()  # Očekuje se da će se vratiti nakon obrade
+        md5_hash = hashlib.md5(part_data).hexdigest()
+        part_registry[part_id]['md5_hash'] = md5_hash
+    update_status(file_registry, file_id, "complete")
+
 
 def komanda_get(file_id):
     print("Komanda get")
@@ -34,4 +108,18 @@ def komande():
             break
 
 if __name__ == "__main__":
-    komande()
+    #komande()
+    data = [b'data1', b'data2', b'data3']  # Ovo može biti stvarni deo fajla
+    file_registry = {}
+    part_registry = {}
+    index = {}
+    ui_processes = multiprocessing.Pool()  # Ovo omogućava paralelnu obradu delova
+    file_name = input("Unesite put do fajla: ")
+    komanda_put(file_registry, part_registry, index, file_name, data, ui_processes)
+
+    print("File Registry:")
+    print(file_registry)
+    print("Part Registry:")
+    print(part_registry)
+    print("Index:")
+    print(index)
