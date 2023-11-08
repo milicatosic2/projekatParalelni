@@ -3,7 +3,7 @@ import queue
 import threading
 import multiprocessing
 import hashlib
-import yaml
+# import yaml
 import zlib
 
 file_registry = {}
@@ -12,16 +12,27 @@ index = {}
 
 file_id_counter = 0
 part_id_counter = 0
+lock = threading.Lock()
 
-with open('config.yaml', 'r') as file:
-    config = yaml.safe_load(file)
+memory = 100000
+nrpoc = 10
+path = '/'
+
+occupided = 0
+
+# with open('config.yaml', 'r') as file:
+#     config = yaml.safe_load(file)
+#   memory = config['memory']
 
 
 def add_file(file_name, status):
+    global lock
     global file_registry
     global file_id_counter
+    lock.acquire()
     file_id_counter += 1
     file_id = file_id_counter
+    lock.release()
     file_registry[file_id] = {
         'file_name': file_name,
         'status': status,
@@ -61,14 +72,19 @@ def add_part(file_id, part_number, md5_hash):
 
 def process_file_part(part_id, data):
     md5_hash = hashlib.md5(data).hexdigest()
+    print(f"MD5 hash {md5_hash}")
     compressed_data = zlib.compress(data)
-    # Simulacija obrade - ovdje bi se mogla obaviti stvarna obrada
-    # ...
+    print(f"Compressed data {compressed_data}")
 
-    return md5_hash, compressed_data  # Vraća se MD5 i kompresovani podaci
+    with open(f'compressed_{part_id}.part', 'wb') as writer:
+        writer.write(compressed_data)
+
+    return md5_hash, compressed_data
 
 
-def remove_part(part_registry, index, part_id):
+def remove_part(part_id):
+    global part_registry
+    global index
     if part_id in part_registry:
         file_id = part_registry[part_id]['file_id']
         del part_registry[part_id]
@@ -76,7 +92,8 @@ def remove_part(part_registry, index, part_id):
             index[file_id].remove(part_id)
 
 
-def get_parts_of_file(index, file_id):
+def get_parts_of_file(file_id):
+    global index
     return index.get(file_id, [])
 
 
@@ -84,15 +101,23 @@ def get_part_info(part_id):
     global part_registry
     return part_registry.get(part_id)
 
-def process_file_part_get(part_id,md5_hash,result_queue):
-    md5_hash2 = hashlib.md5(md5_hash.encode()).hexdigest()
-    md5_hash3 = hashlib.md5(part_registry[part_id]['md5_hash'].encode()).hexdigest()
-    if md5_hash2 != md5_hash3:
+def process_file_part_get(part_id, md5_hash):
+    #mormaon da znamo indeks unutar fajla, kad citamo
+    with open(f'compressed_{part_id}.part', 'rb') as reader:
+        compressed2 = reader.read()
+    block2 = zlib.decompress(compressed2)
+    digest2 = hashlib.md5(block2).hexdigest()
+    # md5_hash2 = hashlib.md5(md5_hash.encode()).hexdigest()
+    # md5_hash3 = part_registry[part_id]['md5_hash']
+    # md5_hash3 = hashlib.md5(part_registry[part_id]['md5_hash'].encode()).hexdigest()
+    if md5_hash != digest2:
         print("Usli u if")
-        result_queue.put("MD5 hesevi se ne pojklapaju")
+        return False
+        # result_queue.put("MD5 hesevi se ne pojklapaju")
     else:
         print("Usli u else")
-        result_queue.put(md5_hash)
+        # result_queue.put(md5_hash)
+        return block2
 
 
 def komanda_put(file_name):
@@ -103,6 +128,7 @@ def komanda_put(file_name):
      with open(file_name, 'rb') as reader:
          while True:
              part_number += 1
+             # occupied += 6
              data = reader.read(nbytes)
              if not data:
                  break
@@ -110,7 +136,8 @@ def komanda_put(file_name):
              part_id = add_part(file_id, part_number, None)  # MD5 će biti postavljen kasnije
 
              # Obrada dela fajla
-             md5_hash, compressed_data = process_file_part(part_id, data)
+             md5_hash, _ = process_file_part(part_id, data)
+             # occupied -= 6
 
              part_registry[part_id]['md5_hash'] = md5_hash  # Dodavanje MD5 hasha u registry
              # index[file_id].append(part_id)
@@ -132,23 +159,38 @@ def komanda_get(file_id,ui_processes):
         return
 
 
-    parts = get_parts_of_file(index, file_id)
+    parts = get_parts_of_file(file_id)
     file_name = file_info['file_name']
 
-    result_queue = queue.Queue()
-    with open(file_name, "wb") as output_file:
+    # result_queue = queue.Queue()
+    with open(file_name+"balh", "wb") as output_file:
+        parts = []
+        ## ress = []
         for part_id in parts:
+            ## if ress[0].is_ready():
+            ##    res = ress.pop(0).get()
+            ##    if isinstance(res, str):
+            ##       print("Pronadjena je greska")
+            ##    else:
+            ##       print("uso u else")
+            ##       output_file.write(res)
+
             part_info = get_part_info(part_id)
             print(part_info)
-            # ui_processes.apply_async(process_file_part_get, args=(part_id, part_info['md5_hash'], result_queue))
-            process_file_part_get(part_id, part_info['md5_hash'], result_queue)
-            result = result_queue.get()
-            print(result)
-            if isinstance(result, str):
-                print("Pronadjena je greska")
+
+            # parts.append((part_id, part_info['md5_hash']))
+            # if len(parts==5):
+            #     ress = ui_processes.map(process_file_part_get, parts)
+            res  = ui_processes.apply_async(process_file_part_get, args=(part_id, part_info['md5_hash']))##.get()
+            ## ress.append(res)
+            #process_file_part_get(part_id, part_info['md5_hash'])
+            #result = result_queue.get()
+
+            if isinstance(res, str):
+               print("Pronadjena je greska")
             else:
                 print("uso u else")
-                output_file.write(result)
+                output_file.write(res)
 
 
 def komanda_delete(file_id):
@@ -156,8 +198,9 @@ def komanda_delete(file_id):
 
 
 def komanda_list():
-    print("Komanda list")
-
+    global file_registry
+    for file_id, file_data in file_registry.items():
+        print(f"File ID: {file_id}, File Name: {file_data['file_name']}, Status: {file_data['status']}")
 
 def komande():
     ui_processes = multiprocessing.Pool(processes=20)
@@ -181,6 +224,10 @@ def komande():
             list_komanda_thread = threading.Thread(target=komanda_list)
             list_komanda_thread.start()
         if komanda.startswith("exit"):
+            ui_processes.close()  # Zatvara procese UI
+            ui_processes.join()  # Čeka da se završe svi procesi UI
+            # Dodajte dodatne akcije za zatvaranje ili čišćenje sistema ako je potrebno
+            print("Sistem je zatvoren. Hvala na korišćenju!")
             break
 
 
